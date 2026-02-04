@@ -1,0 +1,15 @@
+# GNUstep build
+obj/
+obj.*/
+*.o
+*.so
+*.d
+
+# macOS
+.DS_Store
+
+# IDE
+*.swp
+*~
+.idea/
+.vscode/
