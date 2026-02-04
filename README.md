@@ -43,12 +43,34 @@ This builds SmallStep first (in `../SmallStep`), then SmallPlayer. The executabl
 
 Use **File > Open** to select a video file, then **Play**.
 
+## Project layout
+
+```
+SmallPlayer/
+├── GNUmakefile
+├── README.md
+├── LICENSE
+├── Sources/
+│   ├── App/           # Application entry and delegate
+│   │   ├── main.m
+│   │   ├── AppDelegate.h
+│   │   └── AppDelegate.m
+│   ├── Player/        # Playback engine and video view
+│   │   ├── SPPlayerEngine.h
+│   │   ├── SPPlayerEngine.m
+│   │   ├── SPPlayerView.h
+│   │   └── SPPlayerView.m
+│   └── Backend/       # FFmpeg C backend
+│       ├── SPFFmpegBackend.h
+│       └── SPFFmpegBackend.c
+└── obj/               # Build output (created by make)
+```
+
 ## Architecture
 
-- **SPFFmpegBackend** (C): Thin wrapper over FFmpeg for open/demux/decode video → RGB24.
-- **SPPlayerEngine** (ObjC): Runs decode on a background thread, exposes current frame and playback state; delegate callbacks for UI updates.
-- **SPPlayerView** (ObjC): Custom `NSView` that draws the current frame (centered, scaled).
-- **AppDelegate**: Uses SmallStep’s `SSHostApplication`, `SSMainMenu`, `SSFileDialog`; creates main window with video view and toolbar (Play/Pause, Stop, time label).
+- **Sources/Backend** – **SPFFmpegBackend** (C): Thin wrapper over FFmpeg for open/demux/decode video → RGB24.
+- **Sources/Player** – **SPPlayerEngine** (ObjC): Runs decode on a background thread, exposes current frame and playback state; delegate callbacks for UI updates. **SPPlayerView** (ObjC): Custom `NSView` that draws the current frame (centered, scaled).
+- **Sources/App** – **AppDelegate**: Uses SmallStep’s `SSHostApplication`, `SSMainMenu`, `SSFileDialog`; creates main window with video view and toolbar (Play/Pause, Stop, time label).
 
 ## License
 
