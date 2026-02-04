@@ -2,31 +2,25 @@
 //  SPPlayerEngine.m
 //  SmallPlayer
 //
+//  Engine that forwards to the selected backend and adapts delegate callbacks.
+//
 
 #import "SPPlayerEngine.h"
-#import "SPFFmpegBackend.h"
+#import "SPPlayerBackend.h"
 #import <stdlib.h>
 #import <string.h>
 
 #if defined(GNUSTEP) && !__has_feature(objc_arc)
 # define SPAutorelease(x) [(x) autorelease]
-# define SPRetain(x)      [(x) retain]
-# define SPRelease(x)     [(x) release]
 #else
 # define SPAutorelease(x) (x)
-# define SPRetain(x)      (x)
-# define SPRelease(x)     (void)0
 #endif
 
-@interface SPPlayerEngine ()
-@property (nonatomic, assign) void *ffContext;  // SPFFContext*
-@property (nonatomic, assign) BOOL playing;
-@property (nonatomic, assign) BOOL decodeThreadShouldRun;
-@property (nonatomic, assign) double durationSec;
-@property (nonatomic, assign) double currentTimeSec;
-@property (nonatomic, strong) NSImage *lastFrame;
-@property (nonatomic, strong) NSLock *frameLock;
-@property (nonatomic, assign) NSThread *decodeThread;
+static NSString * const SPPlayerBackendUserDefaultKey = @"PreferredBackend";
+
+@interface SPPlayerEngine () <SPPlayerBackendDelegate>
+@property (nonatomic, strong) id<SPPlayerBackend> backend;
+@property (nonatomic, copy) NSString *currentPath;
 @end
 
 @implementation SPPlayerEngine
@@ -34,13 +28,16 @@
 - (instancetype)init {
     self = [super init];
     if (self) {
-        _ffContext = NULL;
-        _playing = NO;
-        _decodeThreadShouldRun = NO;
-        _durationSec = -1.0;
-        _currentTimeSec = 0.0;
-        _lastFrame = nil;
-        _frameLock = [[NSLock alloc] init];
+        NSString *saved = [[NSUserDefaults standardUserDefaults] stringForKey:SPPlayerBackendUserDefaultKey];
+        if (!saved || [saved length] == 0)
+            saved = SPPlayerBackendIdentifierFFmpeg;
+        _backendIdentifier = [saved copy];
+        self.backend = SPPlayerBackendCreate(_backendIdentifier);
+        if (!_backend)
+            self.backend = SPPlayerBackendCreate(SPPlayerBackendIdentifierFFmpeg);
+        if (_backend)
+            [_backend setDelegate:self];
+        _currentPath = nil;
     }
     return self;
 }
@@ -48,146 +45,106 @@
 - (void)dealloc {
     [self close];
 #if defined(GNUSTEP) && !__has_feature(objc_arc)
-    [_lastFrame release];
-    [_frameLock release];
+    [_backend release];
+    [_backendIdentifier release];
+    [_currentPath release];
     [super dealloc];
 #endif
 }
 
+- (void)setBackendIdentifier:(NSString *)backendIdentifier {
+    if (!backendIdentifier || [backendIdentifier isEqualToString:_backendIdentifier]) return;
+    NSString *path = [_currentPath copy];
+    [_backend close];
+    _backendIdentifier = [backendIdentifier copy];
+    [[NSUserDefaults standardUserDefaults] setObject:_backendIdentifier forKey:SPPlayerBackendUserDefaultKey];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    self.backend = SPPlayerBackendCreate(_backendIdentifier);
+    if (!_backend)
+        self.backend = SPPlayerBackendCreate(SPPlayerBackendIdentifierFFmpeg);
+    if (_backend)
+        [_backend setDelegate:self];
+    if (path && [path length] > 0) {
+        [_backend openFile:path];
+        _currentPath = [path copy];
+    } else {
+        _currentPath = nil;
+    }
+}
+
++ (NSArray<NSString *> *)availableBackendIdentifiers {
+    return SPPlayerBackendAvailableIdentifiers();
+}
+
++ (NSString *)displayNameForBackendIdentifier:(NSString *)identifier {
+    id<SPPlayerBackend> b = SPPlayerBackendCreate(identifier);
+    if (b) {
+        NSString *name = [b backendDisplayName];
+        return name ? name : identifier;
+    }
+    return identifier;
+}
+
 - (BOOL)openFile:(NSString *)path {
+    if (!_backend) return NO;
     [self close];
-    const char *cpath = [path fileSystemRepresentation];
-    if (!cpath) return NO;
-    void *ctx = sp_ff_open(cpath);
-    if (!ctx) {
-        if ([_delegate respondsToSelector:@selector(playerEngine:didFailWithError:)]) {
+    if (![path length]) return NO;
+    if (![_backend openFile:path]) {
+        if ([_delegate respondsToSelector:@selector(playerEngine:didFailWithError:)])
             [_delegate playerEngine:self didFailWithError:@"Failed to open file"];
-        }
         return NO;
     }
-    _ffContext = ctx;
-    _durationSec = sp_ff_duration(ctx);
-    _currentTimeSec = 0.0;
+    _currentPath = [path copy];
     return YES;
 }
 
 - (void)close {
-    _decodeThreadShouldRun = NO;
-    _playing = NO;
-    if (_decodeThread && [_decodeThread isExecuting]) {
-        while ([_decodeThread isExecuting])
-            [NSThread sleepForTimeInterval:0.02];
-    }
-    if (_ffContext) {
-        sp_ff_close(_ffContext);
-        _ffContext = NULL;
-    }
-    [_frameLock lock];
-    _lastFrame = nil;
-    [_frameLock unlock];
+    [_backend close];
+    _currentPath = nil;
 }
 
 - (void)play {
-    if (!_ffContext) return;
-    if (_playing) return;
-    _playing = YES;
-    _decodeThreadShouldRun = YES;
-    _decodeThread = [[NSThread alloc] initWithTarget:self selector:@selector(decodeLoop) object:nil];
-    [_decodeThread start];
+    [_backend play];
 }
 
 - (void)pause {
-    _decodeThreadShouldRun = NO;
-    _playing = NO;
+    [_backend pause];
 }
 
 - (void)stop {
-    _decodeThreadShouldRun = NO;
-    _playing = NO;
-    if (_ffContext) {
-        sp_ff_seek(_ffContext, 0.0);
-        _currentTimeSec = 0.0;
-    }
+    [_backend stop];
 }
 
 - (void)seekToTime:(double)timeSec {
-    if (!_ffContext) return;
-    sp_ff_seek(_ffContext, timeSec);
-    _currentTimeSec = timeSec;
+    [_backend seekToTime:timeSec];
 }
 
-- (BOOL)isPlaying { return _playing; }
-- (double)duration { return _durationSec; }
-- (double)currentTime { return _currentTimeSec; }
+- (BOOL)isPlaying { return [_backend isPlaying]; }
+- (double)duration { return [_backend duration]; }
+- (double)currentTime { return [_backend currentTime]; }
 
 - (NSImage *)currentFrame {
-    [_frameLock lock];
-    NSImage *img = _lastFrame;
-#if defined(GNUSTEP) && !__has_feature(objc_arc)
-    if (img) img = [img retain];
-#endif
-    [_frameLock unlock];
-#if defined(GNUSTEP) && !__has_feature(objc_arc)
-    return [img autorelease];
-#else
-    return img;
-#endif
+    return [_backend currentFrame];
 }
 
-- (void)decodeLoop {
-    @autoreleasepool {
-        void *ctx = _ffContext;
-        if (!ctx) return;
-        int w = 0, h = 0;
-        size_t buf_size = (size_t)1920 * 1080 * 3;
-        uint8_t *rgb = malloc(buf_size);
-        if (!rgb) return;
-        while (_decodeThreadShouldRun && ctx) {
-            size_t need = (w > 0 && h > 0) ? (size_t)w * (size_t)h * 3 : buf_size;
-            if (buf_size < need) {
-                buf_size = need;
-                uint8_t *n = realloc(rgb, buf_size);
-                if (!n) break;
-                rgb = n;
-            }
-            int r = sp_ff_decode_next(ctx, rgb, buf_size, &w, &h, &_currentTimeSec);
-            if (r == 1) {
-                NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
-                    pixelsWide:w pixelsHigh:h bitsPerSample:8 samplesPerPixel:3 hasAlpha:NO isPlanar:NO
-                    colorSpaceName:NSDeviceRGBColorSpace bytesPerRow:w * 3 bitsPerPixel:24];
-                if (rep && [rep bitmapData]) {
-                    memcpy([rep bitmapData], rgb, (size_t)(w * h * 3));
-                    NSImage *img = [[NSImage alloc] initWithSize:NSMakeSize((CGFloat)w, (CGFloat)h)];
-                    [img addRepresentation:rep];
-#if defined(GNUSTEP) && !__has_feature(objc_arc)
-                    [rep release];
-#endif
-                    [_frameLock lock];
-                    _lastFrame = SPAutorelease(img);
-                    [_frameLock unlock];
-#if defined(GNUSTEP) && !__has_feature(objc_arc)
-                    [img release];
-#endif
-                    NSImage *frameCopy = [self currentFrame];
-                    double t = _currentTimeSec;
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        if ([self->_delegate respondsToSelector:@selector(playerEngine:didUpdateFrame:atTime:)])
-                            [self->_delegate playerEngine:self didUpdateFrame:frameCopy atTime:t];
-                    });
-                }
-                usleep(33000);  /* ~30 fps pacing */
-            } else if (r == 0) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if ([self->_delegate respondsToSelector:@selector(playerEngineDidReachEnd:)])
-                        [self->_delegate playerEngineDidReachEnd:self];
-                });
-                break;
-            } else {
-                break;
-            }
-        }
-        free(rgb);
-    }
+#pragma mark - SPPlayerBackendDelegate
+
+- (void)playerBackend:(id<SPPlayerBackend>)backend didDecodeFrame:(NSImage *)frame atTime:(double)timeSec {
+    (void)backend;
+    if ([_delegate respondsToSelector:@selector(playerEngine:didUpdateFrame:atTime:)])
+        [_delegate playerEngine:self didUpdateFrame:frame atTime:timeSec];
+}
+
+- (void)playerBackendDidReachEnd:(id<SPPlayerBackend>)backend {
+    (void)backend;
+    if ([_delegate respondsToSelector:@selector(playerEngineDidReachEnd:)])
+        [_delegate playerEngineDidReachEnd:self];
+}
+
+- (void)playerBackend:(id<SPPlayerBackend>)backend didFailWithError:(NSString *)error {
+    (void)backend;
+    if ([_delegate respondsToSelector:@selector(playerEngine:didFailWithError:)])
+        [_delegate playerEngine:self didFailWithError:error];
 }
 
 @end

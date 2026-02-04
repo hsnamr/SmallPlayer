@@ -41,6 +41,26 @@
         [SSMainMenuItem itemWithTitle:@"Open..." action:@selector(openFile:) keyEquivalent:@"o" modifierMask:NSCommandKeyMask target:self],
     ];
     [menu buildMenuWithItems:items quitTitle:@"Quit SmallPlayer" quitKeyEquivalent:@"q"];
+    /* Add Backend submenu (FFmpeg, MPlayer, MEncoder) */
+    NSMenu *mainMenu = [NSApp mainMenu];
+    NSMenuItem *backendItem = [[NSMenuItem alloc] initWithTitle:@"Backend" action:NULL keyEquivalent:@""];
+    NSMenu *backendMenu = [[NSMenu alloc] initWithTitle:@"Backend"];
+    for (NSString *bid in [SPPlayerEngine availableBackendIdentifiers]) {
+        NSString *title = [SPPlayerEngine displayNameForBackendIdentifier:bid];
+        NSMenuItem *mi = [[NSMenuItem alloc] initWithTitle:title action:@selector(selectBackend:) keyEquivalent:@""];
+        [mi setTarget:self];
+        [mi setRepresentedObject:bid];
+        [backendMenu addItem:mi];
+#if defined(GNUSTEP) && !__has_feature(objc_arc)
+        [mi release];
+#endif
+    }
+    [backendItem setSubmenu:backendMenu];
+    [mainMenu addItem:backendItem];
+#if defined(GNUSTEP) && !__has_feature(objc_arc)
+    [backendMenu release];
+    [backendItem release];
+#endif
 #if defined(GNUSTEP) && !__has_feature(objc_arc)
     [menu release];
 #endif
@@ -157,6 +177,14 @@
 - (void)stopPlayback:(id)sender {
     (void)sender;
     [_playerEngine stop];
+    [_playPauseButton setTitle:@"Play"];
+    [self updateTimeLabel];
+}
+
+- (void)selectBackend:(id)sender {
+    NSString *bid = [sender representedObject];
+    if (![bid isKindOfClass:[NSString class]]) return;
+    [_playerEngine setBackendIdentifier:bid];
     [_playPauseButton setTitle:@"Play"];
     [self updateTimeLabel];
 }

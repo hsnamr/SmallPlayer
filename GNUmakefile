@@ -9,7 +9,12 @@ SmallPlayer_OBJC_FILES = \
 	Sources/App/main.m \
 	Sources/App/AppDelegate.m \
 	Sources/Player/SPPlayerEngine.m \
-	Sources/Player/SPPlayerView.m
+	Sources/Player/SPPlayerView.m \
+	Sources/Backend/SPPlayerBackend.m \
+	Sources/Backend/SPFFmpegPlayerBackend.m \
+	Sources/Backend/SPMplayerBackend.m \
+	Sources/Backend/SPMencoderBackend.m \
+	Sources/Backend/SPMpvBackend.m
 
 SmallPlayer_C_FILES = \
 	Sources/Backend/SPFFmpegBackend.c
@@ -18,7 +23,12 @@ SmallPlayer_HEADER_FILES = \
 	Sources/App/AppDelegate.h \
 	Sources/Player/SPPlayerEngine.h \
 	Sources/Player/SPPlayerView.h \
-	Sources/Backend/SPFFmpegBackend.h
+	Sources/Backend/SPPlayerBackend.h \
+	Sources/Backend/SPFFmpegBackend.h \
+	Sources/Backend/SPFFmpegPlayerBackend.h \
+	Sources/Backend/SPMplayerBackend.h \
+	Sources/Backend/SPMencoderBackend.h \
+	Sources/Backend/SPMpvBackend.h
 
 SmallPlayer_RESOURCE_FILES =
 
